@@ -142,6 +142,7 @@ function versOffre(issue) {
     eliminatoires: d.eliminatoires || [],
     reponses: d.reponses_types || [],
     lettre: (corps.match(RE_LETTRE) || [])[1] || "",
+    completeLe: d.complete_le || "",
   };
 }
 
@@ -397,8 +398,9 @@ function vueReglages() {
         h("li", {}, "Ouvrez ", h("a", { href: "https://github.com/settings/personal-access-tokens/new", target: "_blank", rel: "noopener" }, "github.com → Fine-grained token"), "."),
         h("li", {}, "Nom : « Appli candidatures ». Expiration : 1 an."),
         h("li", {}, "Repository access : ", h("b", {}, "Only select repositories"), " → votre dépôt de l'agent uniquement."),
-        h("li", {}, "Permissions du dépôt : ", h("code", {}, "Issues : Read and write"), " et ", h("code", {}, "Actions : Read and write"), " (pour le bouton « Chercher maintenant »)."),
+        h("li", {}, "Permissions du dépôt : ", h("code", {}, "Issues : Read and write"), ", ", h("code", {}, "Actions : Read and write"), " (bouton « Chercher maintenant ») et ", h("code", {}, "Contents : Read and write"), " (captures d'écran des annonces)."),
         h("li", {}, "Générez, copiez le jeton et collez-le ci-dessus."),
+        h("li", {}, "Jeton déjà créé ? Pas besoin d'en refaire un : sur GitHub, ouvrez-le, ajoutez la permission manquante et enregistrez."),
       ),
       h("p", {}, "Le jeton ne donne accès qu'à ce dépôt. Vous pouvez le révoquer à tout moment depuis GitHub."),
     ),
@@ -427,8 +429,8 @@ async function ouvrirFiche(numero) {
   const lettreEditable = offre.statut === "a-valider";
   if (!lettreEditable) zoneLettre.readOnly = true;
 
-  const copier = async (texte, quoi) => {
-    try { await navigator.clipboard.writeText(texte); toast(`${quoi} copiée.`); }
+  const copier = async (texte, quoi, accord = "copiée") => {
+    try { await navigator.clipboard.writeText(texte); toast(`${quoi} ${accord}.`); }
     catch { toast("Copie impossible sur cet appareil.", true); }
   };
 
@@ -455,7 +457,10 @@ async function ouvrirFiche(numero) {
         ),
         !offre.complete ? h("div", { class: "avertissement" }, "Annonce partielle : l'agent n'a vu qu'un extrait. Lisez l'offre complète avant de valider.") : null,
         offre.resume ? h("p", { class: "resume" }, offre.resume) : null,
-        offre.lienOffre ? h("p", {}, h("a", { href: offre.lienOffre, target: "_blank", rel: "noopener noreferrer" }, "Voir l'annonce ↗")) : null,
+        offre.lienOffre ? h("div", { class: "meta liens-annonce" },
+          h("a", { class: "bouton bouton-petit", href: offre.lienOffre, target: "_blank", rel: "noopener noreferrer" }, "Voir l'annonce ↗"),
+          h("button", { class: "bouton bouton-petit", onclick: () => copier(offre.lienOffre, "Lien de l'annonce", "copié") }, "Copier le lien"),
+        ) : null,
 
         offre.forts.length ? h("div", { class: "bloc" }, h("h3", {}, "Points forts"), h("ul", { class: "points forts" }, offre.forts.map((p) => h("li", {}, p)))) : null,
         offre.faibles.length ? h("div", { class: "bloc" }, h("h3", {}, "Points faibles"), h("ul", { class: "points faibles" }, offre.faibles.map((p) => h("li", {}, p)))) : null,
@@ -476,6 +481,7 @@ async function ouvrirFiche(numero) {
             h("button", { class: "bouton bouton-petit", onclick: () => copier(rep, "Réponse") }, "Copier"),
           )),
         ) : null,
+        ["a-valider", "a-postuler"].includes(offre.statut) ? blocCompleter(offre) : null,
         h("div", { class: "bloc" }, h("h3", {}, "Historique"), historique),
         h("p", {}, h("a", { href: offre.url, target: "_blank", rel: "noopener", class: "mini-score" }, `Fiche #${offre.numero} sur GitHub ↗`)),
       ),
@@ -561,6 +567,125 @@ function boutonsActions(offre, zoneLettre, copier) {
     default:
       return [];
   }
+}
+
+// ── Compléter l'annonce (texte, lien, captures) ─────────────────────
+// Les captures sont réduites puis déposées dans le dépôt (dossier annonces/), et la commande
+// /completer demande à l'agent de relire l'annonce complète et de réévaluer l'offre.
+async function compresser(fichier) {
+  const image = await createImageBitmap(fichier);
+  const echelle = Math.min(1, 1200 / image.width, 4000 / image.height);
+  const toile = document.createElement("canvas");
+  toile.width = Math.round(image.width * echelle);
+  toile.height = Math.round(image.height * echelle);
+  toile.getContext("2d").drawImage(image, 0, 0, toile.width, toile.height);
+  const blob = await new Promise((ok) => toile.toBlob(ok, "image/jpeg", 0.85));
+  const donnees = await new Promise((ok, ko) => {
+    const lecteur = new FileReader();
+    lecteur.onload = () => ok(String(lecteur.result).split(",")[1]);
+    lecteur.onerror = ko;
+    lecteur.readAsDataURL(blob);
+  });
+  return { donnees, apercu: URL.createObjectURL(blob) };
+}
+
+async function deposerCapture(numero, index, base64) {
+  const chemin = `annonces/${numero}-${Date.now()}-${index}.jpg`;
+  await gh(`${depot()}/contents/${chemin}`, {
+    method: "PUT",
+    body: JSON.stringify({ message: `Capture de l'annonce (fiche #${numero})`, content: base64 }),
+  });
+  return chemin;
+}
+
+async function suivreCompletion(offre, delaiMax = 240000) {
+  const debut = Date.now();
+  while (Date.now() - debut < delaiMax) {
+    await new Promise((r) => setTimeout(r, 10000));
+    try {
+      const maj = versOffre(await gh(`${depot()}/issues/${offre.numero}`));
+      if (maj.completeLe && maj.completeLe !== offre.completeLe) {
+        const i = etat.offres.findIndex((o) => o.numero === maj.numero);
+        if (i >= 0) etat.offres[i] = maj;
+        rendre();
+        return maj;
+      }
+    } catch { /* on réessaie */ }
+  }
+  return null;
+}
+
+function blocCompleter(offre) {
+  const captures = []; // { donnees, apercu }
+  const zone = h("textarea", {
+    class: "lettre complement", rows: "5",
+    placeholder: "Collez ici le texte de l'annonce, ou un lien vers le site de l'entreprise…",
+    "aria-label": "Texte ou lien de l'annonce",
+  });
+  const apercus = h("div", { class: "apercus" });
+  const choix = h("input", { type: "file", accept: "image/*", multiple: true, class: "sr", id: `captures-${offre.numero}` });
+
+  const dessiner = () => apercus.replaceChildren(...captures.map((c, i) => h("div", { class: "apercu" },
+    h("img", { src: c.apercu, alt: `Capture ${i + 1}` }),
+    h("button", { class: "retirer", "aria-label": "Retirer", onclick: () => { captures.splice(i, 1); dessiner(); } }, "✕"),
+  )));
+
+  choix.addEventListener("change", async () => {
+    for (const f of [...choix.files].slice(0, 6 - captures.length)) {
+      try { captures.push(await compresser(f)); } catch { toast("Image illisible.", true); }
+    }
+    choix.value = "";
+    dessiner();
+  });
+
+  const envoyer = h("button", {
+    class: "bouton principal",
+    onclick: async (e) => {
+      const b = e.currentTarget;
+      const texte = zone.value.trim();
+      if (!texte && !captures.length) { toast("Collez le texte, un lien, ou ajoutez une capture.", true); return; }
+      if (!captures.length && /^(https?:\/\/\S*(linkedin|indeed|lnkd)\.\S*\s*)+$/i.test(texte)) {
+        toast("Les liens LinkedIn/Indeed ne peuvent pas être lus : collez le texte ou ajoutez une capture.", true);
+        return;
+      }
+      b.disabled = true;
+      try {
+        b.textContent = captures.length ? "Envoi des captures…" : "Envoi…";
+        const chemins = [];
+        for (const [i, c] of captures.entries()) chemins.push(await deposerCapture(offre.numero, i, c.donnees));
+        await commander(offre, ["/completer", texte, ...chemins.map((c) => `capture: ${c}`)].filter(Boolean).join("\n"));
+        document.getElementById("fiche").close();
+        toast("L'agent lit l'annonce complète… nouvelle évaluation d'ici 1 à 2 minutes.");
+        const maj = await suivreCompletion(offre);
+        if (maj) {
+          toast(`Offre réévaluée : ${offre.score} → ${maj.score}/100.`);
+          ouvrirFiche(maj.numero);
+        } else {
+          toast("Pas encore de réponse de l'agent : regardez l'historique de la fiche.", true);
+        }
+      } catch (err) {
+        toast(err.statut === 403 || err.statut === 404
+          ? "Ce jeton ne peut pas déposer de captures : ajoutez la permission « Contents : Read and write » (voir Réglages)."
+          : messageErreur(err), true);
+      } finally {
+        b.disabled = false;
+        b.textContent = "Envoyer à l'agent";
+      }
+    },
+  }, "Envoyer à l'agent");
+
+  return h("div", { class: `bloc completer${offre.complete ? "" : " a-completer"}` },
+    h("h3", {}, offre.completeLe ? "Annonce complétée — compléter à nouveau" : "Compléter l'annonce"),
+    offre.complete ? null : h("p", { class: "mini-score" },
+      "L'agent n'a vu qu'un extrait. Copiez le texte de l'annonce (ou faites des captures d'écran) : il la relira, la notera à nouveau et réécrira la lettre."),
+    zone,
+    apercus,
+    h("div", { class: "meta" },
+      h("label", { class: "bouton bouton-petit", for: `captures-${offre.numero}` }, "📷 Ajouter des captures"),
+      choix,
+      envoyer,
+    ),
+  );
 }
 
 function confirmer(titre, texte, libelleOk) {

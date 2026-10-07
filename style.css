@@ -318,3 +318,18 @@ dialog::backdrop { background: rgba(20, 16, 12, .45); backdrop-filter: blur(2px)
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* ── Compléter l'annonce ──────────────────── */
+.liens-annonce { margin-top: 12px; }
+.completer.a-completer { padding: 14px; border-radius: var(--rayon); background: var(--accent-doux); }
+.completer .complement { min-height: 120px; font-family: var(--sans); font-size: 15px; }
+.completer .meta { align-items: center; margin-top: 8px; }
+.completer .bouton.principal { margin-left: auto; min-height: 40px; }
+.apercus { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.apercus:empty { display: none; }
+.apercu { position: relative; }
+.apercu img { width: 76px; height: 110px; object-fit: cover; object-position: top; border-radius: 8px; border: 1px solid var(--filet); display: block; }
+.apercu .retirer {
+  position: absolute; top: -6px; right: -6px; width: 22px; height: 22px; border-radius: 50%;
+  border: 0; background: var(--encre); color: var(--papier); font-size: 11px; line-height: 22px; padding: 0;
+}
