@@ -457,10 +457,12 @@ async function ouvrirFiche(numero) {
         ),
         !offre.complete ? h("div", { class: "avertissement" }, "Annonce partielle : l'agent n'a vu qu'un extrait. Lisez l'offre complète avant de valider.") : null,
         offre.resume ? h("p", { class: "resume" }, offre.resume) : null,
-        offre.lienOffre ? h("div", { class: "meta liens-annonce" },
-          h("a", { class: "bouton bouton-petit", href: offre.lienOffre, target: "_blank", rel: "noopener noreferrer" }, "Voir l'annonce ↗"),
-          h("button", { class: "bouton bouton-petit", onclick: () => copier(offre.lienOffre, "Lien de l'annonce", "copié") }, "Copier le lien"),
-        ) : null,
+        h("div", { class: "meta liens-annonce" },
+          offre.lienOffre ? h("a", { class: "bouton bouton-petit", href: offre.lienOffre, target: "_blank", rel: "noopener noreferrer" }, "Voir l'annonce ↗") : null,
+          offre.lienOffre ? h("button", { class: "bouton bouton-petit", onclick: () => copier(offre.lienOffre, "Lien de l'annonce", "copié") }, "Copier le lien") : null,
+          // Lien mort (fréquent avec Adzuna) : l'annonce existe souvent encore sur le site de l'entreprise.
+          h("a", { class: "bouton bouton-petit", href: rechercheAilleurs(offre), target: "_blank", rel: "noopener noreferrer" }, "Chercher ailleurs ↗"),
+        ),
 
         offre.forts.length ? h("div", { class: "bloc" }, h("h3", {}, "Points forts"), h("ul", { class: "points forts" }, offre.forts.map((p) => h("li", {}, p)))) : null,
         offre.faibles.length ? h("div", { class: "bloc" }, h("h3", {}, "Points faibles"), h("ul", { class: "points faibles" }, offre.faibles.map((p) => h("li", {}, p)))) : null,
@@ -503,6 +505,11 @@ async function ouvrirFiche(numero) {
   } catch {
     historique.replaceChildren(h("li", {}, "Historique indisponible."));
   }
+}
+
+function rechercheAilleurs(offre) {
+  const requete = `"${offre.titre.replace(/\s*[(\[]?[hf]\s*\/\s*[hf][)\]]?/gi, "").trim()}" ${offre.entreprise}`;
+  return `https://www.google.com/search?q=${encodeURIComponent(requete)}`;
 }
 
 function boutonsActions(offre, zoneLettre, copier) {
@@ -551,6 +558,14 @@ function boutonsActions(offre, zoneLettre, copier) {
     }
     case "a-postuler":
       return [
+        agir("Retirer", "", async () => {
+          const ok = await confirmer(
+            "Retirer cette offre ?",
+            "Elle sortira de vos offres à postuler (par exemple si le lien de l'annonce ne fonctionne plus). Vous la retrouverez dans Suivi → Écartées, et l'agent ne la reproposera pas.",
+            "Retirer",
+          );
+          if (ok) await changer("/retirer", "ecartee", "Offre retirée de vos offres à postuler.")();
+        }),
         offre.lienOffre ? h("a", { class: "bouton", href: offre.lienOffre, target: "_blank", rel: "noopener noreferrer", onclick: () => copier(zoneLettre.value, "Lettre") }, "Postuler ↗") : null,
         agir("J'ai postulé", "principal", changer("/envoyee", "envoyee", "Noté : candidature envoyée.")),
       ];
