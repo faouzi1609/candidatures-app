@@ -1,5 +1,5 @@
 // Met l'appli en cache pour l'installer et l'ouvrir vite ; les données GitHub ne sont jamais mises en cache.
-const VERSION = "candidatures-v3";
+const VERSION = "candidatures-v4";
 const COQUILLE = ["./", "index.html", "style.css", "app.js", "manifest.webmanifest", "icon.svg", "icon-192.png"];
 
 self.addEventListener("install", (e) => {

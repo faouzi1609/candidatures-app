@@ -31,6 +31,8 @@ const etat = {
   reglages: lireStockage(CLE_REGLAGES, { jeton: "", depot: "" }),
   offres: [],
   derniereCollecte: null,
+  ecartees: { numero: null, offres: [] }, // offres notées sous le seuil, repêchables
+  repechages: new Set(),                   // clés en cours de repêchage
   vue: "jour",
   chargement: false,
   erreur: "",
@@ -143,6 +145,7 @@ function versOffre(issue) {
     reponses: d.reponses_types || [],
     lettre: (corps.match(RE_LETTRE) || [])[1] || "",
     completeLe: d.complete_le || "",
+    cle: d.cle || "",
   };
 }
 
@@ -154,6 +157,17 @@ async function chargerOffres() {
     if (lot.length < 100) break;
   }
   return toutes;
+}
+
+async function chargerEcartees() {
+  try {
+    const [issue] = await gh(`${depot()}/issues?labels=ecartees-agent&state=all&per_page=1`);
+    if (!issue) return { numero: null, offres: [] };
+    const d = JSON.parse(((issue.body || "").match(RE_DONNEES) || [])[1] || "{}");
+    return { numero: issue.number, offres: d.offres || [] };
+  } catch {
+    return etat.ecartees;
+  }
 }
 
 async function chargerDerniereCollecte() {
@@ -171,7 +185,8 @@ async function rafraichir({ silencieux = false } = {}) {
   document.getElementById("btn-rafraichir").classList.add("tourne");
   if (!silencieux && !etat.offres.length) rendre();
   try {
-    const [offres, collecte] = await Promise.all([chargerOffres(), chargerDerniereCollecte()]);
+    const [offres, collecte, ecartees] = await Promise.all([chargerOffres(), chargerDerniereCollecte(), chargerEcartees()]);
+    etat.ecartees = ecartees;
     etat.offres = offres;
     etat.derniereCollecte = collecte;
     etat.erreur = "";
@@ -324,7 +339,71 @@ function vueJour() {
       h("div", { class: "section-titre" }, h("h2", {}, "À déposer vous-même"), h("small", {}, "validées, sans adresse e-mail")),
       h("div", { class: "liste" }, aPostuler.map((x) => carte(x))),
     ] : null,
+
+    blocEcartees(),
   );
+}
+
+// ── Offres écartées par l'agent (repêchables) ───────────────────────
+function blocEcartees() {
+  const dejaSuivies = new Set(etat.offres.map((o) => o.cle).filter(Boolean));
+  const liste = etat.ecartees.offres.filter((e) => !dejaSuivies.has(e.cle));
+  if (!liste.length) return null;
+  return h("details", { class: "ecartees" },
+    h("summary", {},
+      h("h2", {}, "Écartées par l'agent"),
+      h("span", { class: "compte" }, liste.length),
+      h("small", {}, "notées sous votre seuil — vous pouvez les repêcher"),
+    ),
+    h("div", { class: "liste" }, liste.map((e) => {
+      const enCours = etat.repechages.has(e.cle);
+      const lien = lienSur(e.url || "");
+      return h("div", { class: "carte ecartee" },
+        h("div", { class: "score" }, h("b", {}, e.score), h("small", {}, "/100")),
+        h("h3", {}, e.titre),
+        h("div", { class: "entreprise" }, [e.entreprise, e.lieu].filter(Boolean).join(" · ")),
+        e.raison ? h("p", { class: "raison" }, e.raison) : null,
+        h("div", { class: "meta" },
+          e.salaire ? h("span", { class: "etiquette" }, e.salaire) : null,
+          e.source ? h("span", { class: "etiquette" }, SOURCES[e.source] || e.source) : null,
+          lien ? h("a", { class: "bouton bouton-petit", href: lien, target: "_blank", rel: "noopener noreferrer" }, "Voir ↗") : null,
+          h("button", {
+            class: "bouton bouton-petit principal", disabled: enCours,
+            onclick: () => repecher(e),
+          }, enCours ? "Repêchage…" : "Repêcher"),
+        ),
+      );
+    })),
+  );
+}
+
+async function repecher(e) {
+  if (!etat.ecartees.numero) return;
+  etat.repechages.add(e.cle);
+  rendre();
+  try {
+    await gh(`${depot()}/issues/${etat.ecartees.numero}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ body: `/repecher ${e.cle}` }),
+    });
+    toast("Repêchage en cours : l'agent prépare la fiche et la lettre (1 à 2 minutes).");
+    const debut = Date.now();
+    while (Date.now() - debut < 200000) {
+      await new Promise((r) => setTimeout(r, 10000));
+      await rafraichir({ silencieux: true });
+      const fiche = etat.offres.find((o) => o.cle === e.cle);
+      if (fiche) {
+        toast(`Offre repêchée : elle est dans « À valider » (${fiche.score}/100).`);
+        return;
+      }
+    }
+    toast("Pas encore de fiche : réessayez d'actualiser dans une minute.", true);
+  } catch (err) {
+    toast(messageErreur(err), true);
+  } finally {
+    etat.repechages.delete(e.cle);
+    rendre();
+  }
 }
 
 function vueSuivi() {

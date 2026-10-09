@@ -334,3 +334,22 @@ dialog::backdrop { background: rgba(20, 16, 12, .45); backdrop-filter: blur(2px)
   border: 0; background: var(--encre); color: var(--papier); font-size: 11px; line-height: 22px; padding: 0;
 }
 .actions .bouton { padding: 0 10px; white-space: nowrap; font-size: 15px; }
+
+/* ── Écartées par l'agent ─────────────────── */
+.ecartees { margin-top: 28px; }
+.ecartees > summary {
+  list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+  padding-bottom: 6px; border-bottom: 1px solid var(--filet);
+}
+.ecartees > summary::-webkit-details-marker { display: none; }
+.ecartees > summary::before { content: "▸"; color: var(--encre-3); transition: transform .2s; }
+.ecartees[open] > summary::before { transform: rotate(90deg); }
+.ecartees > summary h2 { margin: 0; font: 600 20px/1.2 var(--serif); }
+.ecartees > summary .compte { font-weight: 600; color: var(--encre-3); }
+.ecartees > summary small { flex-basis: 100%; color: var(--encre-3); font-size: 13px; }
+.ecartees .liste { margin-top: 12px; }
+.carte.ecartee { opacity: .92; cursor: default; }
+.carte.ecartee .score { background: var(--gris-doux); }
+.carte .raison { margin: 4px 0 0; font-size: 13px; color: var(--encre-2); font-style: italic; }
+.carte.ecartee > :not(.score) { grid-column: 2; }
+.carte.ecartee .score { grid-row: 1 / span 4; }
